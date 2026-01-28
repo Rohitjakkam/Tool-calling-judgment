@@ -27,6 +27,8 @@ class ActSectionInput(BaseModel):
         default=None,
         description="Court name filter (e.g., 'supreme court', 'delhi high court')"
     )
+    year_from: Optional[int] = Field(default=None, description="Start year filter (e.g., 2020)")
+    year_to: Optional[int] = Field(default=None, description="End year filter (e.g., 2024)")
     size: int = Field(default=10, description="Number of results to return")
 
 
@@ -43,11 +45,17 @@ class MultipleSectionsInput(BaseModel):
     sections: List[str] = Field(
         description="List of sections to search (e.g., ['section 302 ipc', 'section 307 ipc'])"
     )
+    topic: Optional[str] = Field(
+        default=None,
+        description="Legal topic or subject to search along with sections (e.g., 'anticipatory bail', 'quashing', 'discharge')"
+    )
     match_all: bool = Field(
         default=False,
         description="If True, judgment must contain ALL sections. If False, any section matches."
     )
     court: Optional[str] = Field(default=None, description="Court name filter")
+    year_from: Optional[int] = Field(default=None, description="Start year filter (e.g., 2020)")
+    year_to: Optional[int] = Field(default=None, description="End year filter (e.g., 2024)")
     size: int = Field(default=10, description="Number of results to return")
 
 
@@ -57,6 +65,8 @@ class LegalPrincipleInput(BaseModel):
         description="Legal principle or doctrine (e.g., 'res judicata', 'natural justice', 'estoppel', 'basic structure')"
     )
     court: Optional[str] = Field(default=None, description="Court name filter")
+    year_from: Optional[int] = Field(default=None, description="Start year filter (e.g., 2020)")
+    year_to: Optional[int] = Field(default=None, description="End year filter (e.g., 2024)")
     size: int = Field(default=10, description="Number of results to return")
 
 
@@ -69,6 +79,8 @@ def search_by_act_section(
     act_name: str,
     section: str,
     court: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
     size: int = 10
 ) -> str:
     """Search judgments by specific legal act and section number.
@@ -79,11 +91,14 @@ def search_by_act_section(
     - 'Article 21 Constitution cases'
     - 'Section 482 CrPC orders'
     - 'judgments under Section 420 of IPC'
+    - 'Section 420 IPC cases after 2020'
 
     Args:
         act_name: Name of the act (IPC, CrPC, NI Act, etc.)
         section: Section or article number
         court: Optional court filter
+        year_from: Optional start year filter
+        year_to: Optional end year filter
         size: Number of results
     """
     search_text = f"section {section} {act_name}"
@@ -120,6 +135,12 @@ def search_by_act_section(
     filters = []
     if court:
         filters.append({"match": {"court_name": court.lower()}})
+    if year_from and year_to:
+        filters.append({"range": {"year": {"gte": year_from, "lte": year_to}}})
+    elif year_from:
+        filters.append({"range": {"year": {"gte": year_from}}})
+    elif year_to:
+        filters.append({"range": {"year": {"lte": year_to}}})
 
     query = {
         "size": min(size, 20),
@@ -129,7 +150,8 @@ def search_by_act_section(
                 "minimum_should_match": 1,
                 "filter": filters
             }
-        }
+        },
+        "sort": [{"year": "desc"}]
     }
 
     response = execute_search(query)
@@ -192,21 +214,30 @@ def search_by_citation(citation: str, size: int = 3) -> str:
 @tool(args_schema=MultipleSectionsInput)
 def search_by_multiple_sections(
     sections: List[str],
+    topic: Optional[str] = None,
     match_all: bool = False,
     court: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
     size: int = 10
 ) -> str:
-    """Search judgments citing multiple legal sections.
+    """Search judgments citing multiple legal sections, optionally with a specific topic.
 
     Use when user asks for cases involving multiple sections like:
     - 'Cases under Section 302 and 307 IPC'
     - 'Judgments citing both Section 138 NI Act and Section 420 IPC'
     - 'Cases where sections 498A and 304B were invoked'
+    - 'Section 467, 468, 471 IPC cases after 2020'
+    - 'Anticipatory bail cases under Section 420, 467, 468, 471 IPC'
+    - 'Quashing petitions under Section 482 CrPC with Section 420 IPC'
 
     Args:
         sections: List of sections to search
+        topic: Optional topic/subject to search (e.g., 'anticipatory bail', 'quashing', 'discharge')
         match_all: If True, all sections must be present
         court: Optional court filter
+        year_from: Optional start year filter
+        year_to: Optional end year filter
         size: Number of results
     """
     section_clauses = [
@@ -221,31 +252,76 @@ def search_by_multiple_sections(
         for section in sections
     ]
 
+    # Add topic search clause if provided
+    topic_clause = None
+    if topic:
+        topic_clause = {
+            "bool": {
+                "should": [
+                    {
+                        "match_phrase": {
+                            "page_content": {
+                                "query": topic,
+                                "boost": 15
+                            }
+                        }
+                    },
+                    {
+                        "match": {
+                            "keywords": {
+                                "query": topic,
+                                "boost": 8
+                            }
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
+            }
+        }
+
     filters = []
     if court:
         filters.append({"match": {"court_name": court.lower()}})
+    if year_from and year_to:
+        filters.append({"range": {"year": {"gte": year_from, "lte": year_to}}})
+    elif year_from:
+        filters.append({"range": {"year": {"gte": year_from}}})
+    elif year_to:
+        filters.append({"range": {"year": {"lte": year_to}}})
 
     if match_all:
+        must_clauses = section_clauses.copy()
+        if topic_clause:
+            must_clauses.append(topic_clause)
         query = {
             "size": min(size, 20),
             "query": {
                 "bool": {
-                    "must": section_clauses,
+                    "must": must_clauses,
                     "filter": filters
                 }
-            }
+            },
+            "sort": [{"year": "desc"}]
         }
     else:
+        must_clauses = []
+        if topic_clause:
+            must_clauses.append(topic_clause)
         query = {
             "size": min(size, 20),
             "query": {
                 "bool": {
+                    "must": must_clauses if must_clauses else None,
                     "should": section_clauses,
                     "minimum_should_match": 1,
                     "filter": filters
                 }
-            }
+            },
+            "sort": [{"year": "desc"}]
         }
+        # Clean up None values
+        if query["query"]["bool"]["must"] is None:
+            del query["query"]["bool"]["must"]
 
     response = execute_search(query)
     return format_results_to_string(response, max_results=size)
@@ -255,6 +331,8 @@ def search_by_multiple_sections(
 def search_by_legal_principle(
     principle: str,
     court: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
     size: int = 10
 ) -> str:
     """Search judgments discussing specific legal principles or doctrines.
@@ -266,15 +344,24 @@ def search_by_legal_principle(
     - 'separation of powers'
     - 'basic structure doctrine'
     - 'audi alteram partem'
+    - 'recent cases on natural justice after 2020'
 
     Args:
         principle: Legal principle or doctrine name
         court: Optional court filter
+        year_from: Optional start year filter
+        year_to: Optional end year filter
         size: Number of results
     """
     filters = []
     if court:
         filters.append({"match": {"court_name": court.lower()}})
+    if year_from and year_to:
+        filters.append({"range": {"year": {"gte": year_from, "lte": year_to}}})
+    elif year_from:
+        filters.append({"range": {"year": {"gte": year_from}}})
+    elif year_to:
+        filters.append({"range": {"year": {"lte": year_to}}})
 
     query = {
         "size": min(size, 20),
@@ -302,7 +389,8 @@ def search_by_legal_principle(
                 ],
                 "filter": filters
             }
-        }
+        },
+        "sort": [{"year": "desc"}]
     }
 
     response = execute_search(query)

@@ -27,7 +27,7 @@ You have access to 20 specialized search tools. Choose the most appropriate tool
 ### For Legal Reference Queries:
 - `search_by_act_section` → For specific sections (e.g., "Section 138 NI Act")
 - `search_by_citation` → For case citations (e.g., "AIR 2020 SC 123")
-- `search_by_multiple_sections` → When multiple sections are mentioned
+- `search_by_multiple_sections` → When multiple sections are mentioned. IMPORTANT: Use the `topic` parameter when user asks for a specific subject like "anticipatory bail", "quashing", "discharge" along with sections (e.g., "anticipatory bail under Section 420, 467, 468 IPC")
 - `search_by_legal_principle` → For doctrines/principles (e.g., "res judicata")
 
 ### For Court/Judge Queries:

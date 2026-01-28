@@ -106,6 +106,50 @@ def format_results(response: Dict[str, Any], include_score: bool = False) -> Lis
     return documents
 
 
+def generate_s3_link(source_file: Any, court: str, source_name: str) -> str:
+    """
+    Generate S3 link for a judgment document.
+
+    Args:
+        source_file: Source file path from metadata
+        court: Court name
+        source_name: Processed source name (title)
+
+    Returns:
+        S3 public URL for the document
+    """
+    import os
+
+    bucket_name = "lawttorney"
+    region_name = "ap-south-1"
+
+    # Normalize court name
+    s3_root_folder = (court or "").strip().lower()
+
+    # Process source file path
+    if isinstance(source_file, dict):
+        file_path = source_file.get("source", "")
+    else:
+        file_path = str(source_file) if source_file else ""
+
+    # Normalize path for Linux/Windows
+    file_path = file_path.replace("\\", "/")
+    file = os.path.basename(file_path)
+
+    # Generate the correct S3 key based on court type
+    if s3_root_folder == "supreme":
+        s3_key = f"{s3_root_folder}/{source_name}.pdf"
+    elif s3_root_folder == "tribunal":
+        s3_key = f"{s3_root_folder}/{file}"
+    else:
+        s3_key = f"{s3_root_folder}/{file}"
+
+    # Build the S3 public link
+    link = f"https://{bucket_name}.s3.{region_name}.amazonaws.com/{s3_key}"
+
+    return link
+
+
 def format_results_to_string(response: Dict[str, Any], max_results: int = 5) -> str:
     """
     Format Elasticsearch response into a readable string for LLM.
@@ -115,8 +159,10 @@ def format_results_to_string(response: Dict[str, Any], max_results: int = 5) -> 
         max_results: Maximum results to include
 
     Returns:
-        Formatted string with case summaries
+        Formatted string with case summaries and document links
     """
+    import os
+
     hits = response["hits"]["hits"][:max_results]
 
     if not hits:
@@ -135,6 +181,44 @@ def format_results_to_string(response: Dict[str, Any], max_results: int = 5) -> 
         year = source.get("year", "N/A")
         citation = source.get("citation", "N/A")
 
+        # Validate year - if it looks wrong, try to extract from citation or page_content
+        if year and isinstance(year, (int, float)):
+            if year < 1900 or year > 2030:
+                import re
+                year_pattern = r'\b(19\d{2}|20[0-2]\d)\b'
+
+                # First try to extract year from citation
+                year_match = re.search(year_pattern, str(citation))
+                if year_match:
+                    year = int(year_match.group(1))
+                else:
+                    # Fallback: try to extract year from page_content
+                    content_for_year = source.get("page_content", "")[:1000]  # Check first 1000 chars
+                    year_match = re.search(year_pattern, content_for_year)
+                    if year_match:
+                        year = int(year_match.group(1))
+                    else:
+                        year = "N/A"
+
+        # Get source file info
+        source_file = source.get("source", "")
+
+        # Process source name
+        if isinstance(source_file, dict):
+            file_path = source_file.get("source", str(source_file))
+        else:
+            file_path = str(source_file) if source_file else ""
+
+        file_path = file_path.replace("\\", "/")
+        source_basename = os.path.basename(file_path)
+        source_name = os.path.splitext(source_basename)[0]
+
+        # Use source_name from metadata if available, otherwise use title
+        source_name = source.get("source_name", source_name) or title
+
+        # Generate S3 document link
+        doc_link = generate_s3_link(source_file, court, source_name)
+
         # Get first 500 chars of content
         content = source.get("page_content", "")[:500]
 
@@ -143,6 +227,7 @@ def format_results_to_string(response: Dict[str, Any], max_results: int = 5) -> 
 - Court: {court}
 - Year: {year}
 - Citation: {citation}
+- Document Link: {doc_link}
 - Summary: {content}...
 """
         results.append(result)
