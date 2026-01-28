@@ -3,9 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+exports/
 # C extensions
 *.so
-
+chat_sessions/
 # Distribution / packaging
 .Python
 build/
