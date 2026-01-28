@@ -74,6 +74,10 @@ from .specialized_search import (
     search_criminal_appeals,
 )
 
+# Note: Agent and pipeline classes should be imported directly:
+# from tools.agent import LegalResearchAgent, create_legal_agent, run_query
+# from tools.response_agent import ResponseAgent, LegalResearchPipeline, generate_legal_response
+
 
 def get_all_tools() -> List:
     """
@@ -237,4 +241,12 @@ __all__ = [
     "get_all_tools",
     "get_tools_by_category",
     "get_tool_descriptions",
+
+    # Agent and pipeline classes (import directly from tools.agent and tools.response_agent)
+    # "LegalResearchAgent",
+    # "create_legal_agent",
+    # "run_query",
+    # "ResponseAgent",
+    # "LegalResearchPipeline",
+    # "generate_legal_response",
 ]

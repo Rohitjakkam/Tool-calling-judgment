@@ -9,7 +9,31 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from typing import Optional, List, Dict, Any
 
-from . import get_all_tools
+# Import tools directly to avoid circular import
+from .party_search import search_by_party_names, fuzzy_name_search, search_by_single_party
+from .legal_reference_search import search_by_act_section, search_by_citation, search_by_multiple_sections, search_by_legal_principle
+from .court_search import search_by_court, search_by_judge, search_by_date_range, search_by_bench_size
+from .content_search import search_by_legal_topic, search_by_keywords, advanced_boolean_search, search_by_case_type
+from .advanced_search import search_similar_cases, hybrid_search, aggregation_search, search_landmark_cases, search_by_case_status
+from .specialized_search import search_bail_cases, search_quashing_cases, search_writ_petitions, search_criminal_appeals
+
+
+def get_all_tools_for_agent() -> List:
+    """Get all tools for the agent (local function to avoid circular import)."""
+    return [
+        # Party Search Tools
+        search_by_party_names, fuzzy_name_search, search_by_single_party,
+        # Legal Reference Tools
+        search_by_act_section, search_by_citation, search_by_multiple_sections, search_by_legal_principle,
+        # Court Search Tools
+        search_by_court, search_by_judge, search_by_date_range, search_by_bench_size,
+        # Content Search Tools
+        search_by_legal_topic, search_by_keywords, advanced_boolean_search, search_by_case_type,
+        # Advanced Search Tools
+        search_similar_cases, hybrid_search, aggregation_search, search_landmark_cases, search_by_case_status,
+        # Specialized Search Tools
+        search_bail_cases, search_quashing_cases, search_writ_petitions, search_criminal_appeals,
+    ]
 
 
 # System prompt for the legal research agent
@@ -90,7 +114,7 @@ def create_legal_agent(
         Agent ready to process queries
     """
     # Get all tools
-    tools = get_all_tools()
+    tools = get_all_tools_for_agent()
 
     # Create LLM
     llm = ChatOpenAI(model=model, temperature=temperature)
