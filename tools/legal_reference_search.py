@@ -282,17 +282,28 @@ def search_by_multiple_sections(
     filters = []
     if court:
         filters.append({"match": {"court_name": court.lower()}})
+
+    # Year filtering - search in citation field since year field is often corrupted
+    year_should_clauses = []
     if year_from and year_to:
-        filters.append({"range": {"year": {"gte": year_from, "lte": year_to}}})
+        # Search for years in citation field
+        for yr in range(year_from, min(year_to + 1, year_from + 10)):  # Limit range to 10 years
+            year_should_clauses.append({"wildcard": {"citation": f"*{yr}*"}})
     elif year_from:
-        filters.append({"range": {"year": {"gte": year_from}}})
+        # Search for years >= year_from in citation
+        for yr in range(year_from, min(year_from + 10, 2030)):  # Search next 10 years
+            year_should_clauses.append({"wildcard": {"citation": f"*{yr}*"}})
     elif year_to:
-        filters.append({"range": {"year": {"lte": year_to}}})
+        # Search for years <= year_to in citation
+        for yr in range(max(year_to - 9, 1990), year_to + 1):  # Search last 10 years
+            year_should_clauses.append({"wildcard": {"citation": f"*{yr}*"}})
 
     if match_all:
         must_clauses = section_clauses.copy()
         if topic_clause:
             must_clauses.append(topic_clause)
+        if year_should_clauses:
+            must_clauses.append({"bool": {"should": year_should_clauses, "minimum_should_match": 1}})
         query = {
             "size": min(size, 20),
             "query": {
@@ -301,12 +312,14 @@ def search_by_multiple_sections(
                     "filter": filters
                 }
             },
-            "sort": [{"year": "desc"}]
+            "sort": [{"_score": "desc"}]
         }
     else:
         must_clauses = []
         if topic_clause:
             must_clauses.append(topic_clause)
+        if year_should_clauses:
+            must_clauses.append({"bool": {"should": year_should_clauses, "minimum_should_match": 1}})
         query = {
             "size": min(size, 20),
             "query": {
@@ -317,7 +330,7 @@ def search_by_multiple_sections(
                     "filter": filters
                 }
             },
-            "sort": [{"year": "desc"}]
+            "sort": [{"_score": "desc"}]
         }
         # Clean up None values
         if query["query"]["bool"]["must"] is None:

@@ -2,7 +2,7 @@
 """
 Legal Search Tools Package
 
-A collection of 20 specialized tools for searching legal judgments in Elasticsearch.
+A collection of 24 specialized tools for searching legal judgments in Elasticsearch.
 Designed for use with LangChain agents using the modern @tool decorator pattern.
 
 Usage:
@@ -66,6 +66,14 @@ from .advanced_search import (
     search_by_case_status,
 )
 
+# Import specialized search tools
+from .specialized_search import (
+    search_bail_cases,
+    search_quashing_cases,
+    search_writ_petitions,
+    search_criminal_appeals,
+)
+
 
 def get_all_tools() -> List:
     """
@@ -104,6 +112,12 @@ def get_all_tools() -> List:
         aggregation_search,
         search_landmark_cases,
         search_by_case_status,
+
+        # Specialized Search Tools (4)
+        search_bail_cases,
+        search_quashing_cases,
+        search_writ_petitions,
+        search_criminal_appeals,
     ]
 
 
@@ -144,6 +158,12 @@ def get_tools_by_category() -> dict:
             aggregation_search,
             search_landmark_cases,
             search_by_case_status,
+        ],
+        "specialized_search": [
+            search_bail_cases,
+            search_quashing_cases,
+            search_writ_petitions,
+            search_criminal_appeals,
         ],
     }
 
@@ -206,6 +226,12 @@ __all__ = [
     "aggregation_search",
     "search_landmark_cases",
     "search_by_case_status",
+
+    # Specialized search tools
+    "search_bail_cases",
+    "search_quashing_cases",
+    "search_writ_petitions",
+    "search_criminal_appeals",
 
     # Helper functions
     "get_all_tools",
