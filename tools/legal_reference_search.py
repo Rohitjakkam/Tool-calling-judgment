@@ -167,41 +167,83 @@ def search_by_citation(citation: str, size: int = 3) -> str:
     - '(2019) 5 SCC 456'
     - '2021 SCC OnLine Del 1234'
     - 'MANU/SC/0123/2020'
+    - 'Sona Bala Bora v. Jyotirindra Bhatacharjee, (2005) 4 SCC 501'
 
     Args:
-        citation: The case citation
+        citation: The case citation (can include party names with citation)
         size: Number of results
     """
+    import re
+
+    # Extract year from citation for wildcard boosting
+    year_match = re.search(r'\b(19\d{2}|20[0-2]\d)\b', citation)
+    year_wildcards = []
+    if year_match:
+        year = int(year_match.group(1))
+        for yr in range(year - 2, year + 3):
+            year_wildcards.append({"wildcard": {"citation": {"value": f"*{yr}*", "boost": 5}}})
+
+    # Clean citation: normalize brackets for flexible matching
+    # (2005) → 2005, [2005] → 2005
+    cleaned_citation = re.sub(r'[\(\)\[\]]', '', citation).strip()
+
+    # Extract party names if present (pattern: "Name v. Name" or "Name vs Name")
+    party_match = re.match(r'^(.+?)\s+(?:v\.?|vs\.?)\s+(.+?)(?:,|\(|\[|\d{4})', citation, re.IGNORECASE)
+    party_clauses = []
+    if party_match:
+        petitioner = party_match.group(1).strip()
+        respondent = party_match.group(2).strip().rstrip(',')
+        party_clauses = [
+            {"match": {"petitioner_names": {"query": petitioner, "boost": 12, "minimum_should_match": "75%"}}},
+            {"match": {"respondent_names": {"query": respondent, "boost": 12, "minimum_should_match": "75%"}}},
+        ]
+
+    should_clauses = [
+        # Exact phrase match on citation (highest priority)
+        {
+            "match_phrase": {
+                "citation": {
+                    "query": citation,
+                    "boost": 25
+                }
+            }
+        },
+        # Token-level match on citation (flexible for different formats)
+        {
+            "match": {
+                "citation": {
+                    "query": cleaned_citation,
+                    "boost": 15,
+                    "minimum_should_match": "50%"
+                }
+            }
+        },
+        # Search in page content
+        {
+            "match_phrase": {
+                "page_content": {
+                    "query": citation,
+                    "boost": 8
+                }
+            }
+        },
+        # Cleaned citation in page content
+        {
+            "match": {
+                "page_content": {
+                    "query": cleaned_citation,
+                    "boost": 5,
+                    "minimum_should_match": "60%"
+                }
+            }
+        }
+    ] + party_clauses + year_wildcards
+
     query = {
         "size": min(size, 10),
         "query": {
             "bool": {
-                "should": [
-                    {
-                        "match_phrase": {
-                            "citation": {
-                                "query": citation,
-                                "boost": 25
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "citation": {
-                                "query": citation,
-                                "boost": 15
-                            }
-                        }
-                    },
-                    {
-                        "match_phrase": {
-                            "page_content": {
-                                "query": citation,
-                                "boost": 10
-                            }
-                        }
-                    }
-                ],
+                "should": should_clauses,
                 "minimum_should_match": 1
             }
         }

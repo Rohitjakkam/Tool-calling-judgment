@@ -50,14 +50,15 @@ class LegalChatbot:
     """
     Main chatbot class that provides a unified interface for legal research.
 
-    Supports two modes:
+    Supports three modes:
     - single: Uses GPT-4o for both retrieval and response
     - pipeline: Uses GPT-4o for retrieval + Gemini for detailed response
+    - web_search: Uses Gemini 2.5 Pro with Google Search grounding for live web results
     """
 
     def __init__(
         self,
-        mode: Literal["single", "pipeline"] = "single",
+        mode: Literal["single", "pipeline", "web_search"] = "single",
         retrieval_model: str = "gpt-4o",
         response_model: str = "gemini-2.5-flash",
         verbose: bool = False
@@ -66,7 +67,7 @@ class LegalChatbot:
         Initialize the chatbot.
 
         Args:
-            mode: "single" for GPT-only, "pipeline" for GPT+Gemini
+            mode: "single" for GPT-only, "pipeline" for GPT+Gemini, "web_search" for Gemini+Google Search
             retrieval_model: Model for retrieval/tool calling
             response_model: Model for response generation (pipeline mode only)
             verbose: Print debug information
@@ -79,6 +80,7 @@ class LegalChatbot:
         # Initialize agents lazily
         self._retrieval_agent = None
         self._pipeline = None
+        self._web_search_agent = None
 
         # Track if Gemini is available
         self._gemini_available = self._check_gemini_available()
@@ -96,6 +98,22 @@ class LegalChatbot:
                 verbose=self.verbose
             )
         return self._retrieval_agent
+
+    def _get_web_search_agent(self):
+        """Lazy initialization of web search agent."""
+        if self._web_search_agent is None:
+            if not self._gemini_available:
+                raise ValueError(
+                    "Web search mode requires GOOGLE_API_KEY. "
+                    "Please set it in your .env file."
+                )
+            from tools.web_search_agent import WebSearchAgent
+            self._web_search_agent = WebSearchAgent(
+                model="gemini-2.5-flash",
+                temperature=0.3,
+                verbose=self.verbose
+            )
+        return self._web_search_agent
 
     def _get_pipeline(self):
         """Lazy initialization of pipeline."""
@@ -117,7 +135,8 @@ class LegalChatbot:
         self,
         query: str,
         session_history: List[Dict[str, str]] = None,
-        use_pipeline: bool = None
+        use_pipeline: bool = None,
+        use_web_search: bool = False
     ) -> ChatResponse:
         """
         Process a user query and return a response.
@@ -126,12 +145,32 @@ class LegalChatbot:
             query: User's question
             session_history: Previous conversation history
             use_pipeline: Override default mode (True=pipeline, False=single)
+            use_web_search: If True, use web search mode (overrides other modes)
 
         Returns:
             ChatResponse with answer and metadata
         """
         import time
         start_time = time.time()
+
+        # Web search mode takes priority
+        if use_web_search or self.mode == "web_search":
+            if not self._gemini_available:
+                return ChatResponse(
+                    answer="Web search requires GOOGLE_API_KEY. Please set it in your .env file.",
+                    error="GOOGLE_API_KEY not set",
+                    query_time=time.time() - start_time,
+                    mode="web_search"
+                )
+            try:
+                return self._chat_web_search(query, session_history or [], start_time)
+            except Exception as e:
+                return ChatResponse(
+                    answer="Web search encountered an error. Please try again.",
+                    error=str(e),
+                    query_time=time.time() - start_time,
+                    mode="web_search"
+                )
 
         # Determine mode
         use_pipeline_mode = use_pipeline if use_pipeline is not None else (self.mode == "pipeline")
@@ -205,6 +244,44 @@ class LegalChatbot:
             mode="pipeline"
         )
 
+    def _chat_web_search(
+        self,
+        query: str,
+        session_history: List[Dict[str, str]],
+        start_time: float
+    ) -> ChatResponse:
+        """Process query using web search agent with PDF-filtering tools."""
+        import time
+
+        agent = self._get_web_search_agent()
+
+        # Inject session history if available
+        if session_history:
+            agent.chat_history = session_history.copy()
+
+        result = agent.query(query)
+
+        # Build sources from pdf_links
+        pdf_sources = []
+        for link in result.get("pdf_links", []):
+            pdf_sources.append({
+                "title": link.split("/")[-1] or "Legal Document",
+                "document_link": link
+            })
+
+        return ChatResponse(
+            answer=result.get("answer", ""),
+            raw_results=result.get("answer", ""),
+            tools_used=result.get("tools_used", []),
+            sources=pdf_sources,
+            query_time=time.time() - start_time,
+            mode="web_search",
+            metadata={
+                "search_type": "agent_pdf_filtered",
+                "pdf_links": result.get("pdf_links", [])
+            }
+        )
+
     def _extract_sources(self, text: str) -> List[Dict[str, Any]]:
         """Extract case sources from response text."""
         import re
@@ -257,11 +334,13 @@ class LegalChatbot:
             self._retrieval_agent.clear_history()
         if self._pipeline:
             self._pipeline.clear_history()
+        if self._web_search_agent:
+            self._web_search_agent.clear_history()
 
-    def switch_mode(self, mode: Literal["single", "pipeline"]):
-        """Switch between single and pipeline mode."""
-        if mode == "pipeline" and not self._gemini_available:
-            raise ValueError("Pipeline mode requires GOOGLE_API_KEY")
+    def switch_mode(self, mode: Literal["single", "pipeline", "web_search"]):
+        """Switch between single, pipeline, and web_search mode."""
+        if mode in ("pipeline", "web_search") and not self._gemini_available:
+            raise ValueError(f"{mode} mode requires GOOGLE_API_KEY")
         self.mode = mode
 
     @property
@@ -270,6 +349,7 @@ class LegalChatbot:
         modes = ["single"]
         if self._gemini_available:
             modes.append("pipeline")
+            modes.append("web_search")
         return modes
 
     def get_status(self) -> Dict[str, Any]:

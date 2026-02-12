@@ -143,7 +143,12 @@ def render_sidebar():
 
         # Status
         status = st.session_state.chatbot.get_status()
-        mode_label = "Pipeline (GPT + Gemini)" if status["mode"] == "pipeline" else "Single (GPT-4o)"
+        mode_labels = {
+            "single": "Single (GPT-4o)",
+            "pipeline": "Pipeline (GPT + Gemini)",
+            "web_search": "Web Search (Gemini + Google)"
+        }
+        mode_label = mode_labels.get(status["mode"], status["mode"])
         st.markdown(f"""
         <div style="background: #f0f7ff; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
             <span class="status-badge status-online">● Online</span>
@@ -155,15 +160,16 @@ def render_sidebar():
         st.subheader("⚙️ Settings")
         available_modes = status["available_modes"]
         mode_options = {
-            "single": "Single Agent (GPT-4o)",
-            "pipeline": "Pipeline (GPT + Gemini)"
+            "single": "📁 DB Search (GPT-4o)",
+            "pipeline": "📁 DB + Detailed (GPT + Gemini)",
+            "web_search": "🌐 Web Search (Gemini + Google)"
         }
         current_mode = st.selectbox(
             "Response Mode",
             options=available_modes,
             format_func=lambda x: mode_options.get(x, x),
             index=available_modes.index(status["mode"]) if status["mode"] in available_modes else 0,
-            help="Single mode uses GPT-4o. Pipeline mode uses GPT-4o for search + Gemini for response."
+            help="DB Search uses Elasticsearch. Web Search uses Gemini with live Google Search for latest cases."
         )
         if current_mode != status["mode"]:
             try:
@@ -317,12 +323,16 @@ def render_chat_messages():
             if message["role"] == "assistant" and "metadata" in message:
                 metadata = message["metadata"]
                 if metadata.get("tools_used"):
-                    st.caption(f"🔧 Tools: {', '.join(metadata['tools_used'])}")
+                    tools_str = ', '.join(metadata['tools_used'])
+                    if "web_search" in tools_str:
+                        st.caption(f"🌐 Source: {tools_str}")
+                    else:
+                        st.caption(f"🔧 Tools: {tools_str}")
                 if metadata.get("query_time"):
                     st.caption(f"⏱️ Response time: {metadata['query_time']:.2f}s")
 
 
-def process_query(query: str):
+def process_query(query: str, force_web_search: bool = False):
     """Process a user query and get response."""
     # Add user message
     st.session_state.messages.append({"role": "user", "content": query})
@@ -331,11 +341,18 @@ def process_query(query: str):
     session = get_current_session()
     session.add_message("user", query)
 
+    # Determine spinner text based on mode
+    if force_web_search or st.session_state.chatbot.mode == "web_search":
+        spinner_text = "🌐 Searching the web with Google..."
+    else:
+        spinner_text = "🔍 Searching legal database..."
+
     # Get response from chatbot
-    with st.spinner("🔍 Searching legal database..."):
+    with st.spinner(spinner_text):
         response = st.session_state.chatbot.chat(
             query,
-            session_history=session.get_history(last_n=10)
+            session_history=session.get_history(last_n=10),
+            use_web_search=force_web_search
         )
 
     # Add assistant message
@@ -424,9 +441,28 @@ def main():
                         process_query(follow_up)
                         st.rerun()
 
+    # Web search toggle button above chat input
+    col_input, col_web = st.columns([5, 1])
+    with col_web:
+        web_search_clicked = st.button(
+            "🌐 Web",
+            help="Send your next query via Google Web Search instead of the database",
+            use_container_width=True
+        )
+
+    # Store web search intent
+    if web_search_clicked:
+        st.session_state.web_search_next = True
+
+    # Show indicator if web search is queued
+    if st.session_state.get("web_search_next"):
+        st.info("🌐 **Web Search mode active** — Your next query will search the web via Google. Type your query below.")
+
     # Chat input
     if prompt := st.chat_input("Ask a legal question..."):
-        process_query(prompt)
+        force_web = st.session_state.get("web_search_next", False)
+        st.session_state.web_search_next = False  # Reset
+        process_query(prompt, force_web_search=force_web)
         st.rerun()
 
 

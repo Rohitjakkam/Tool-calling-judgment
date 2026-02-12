@@ -162,12 +162,14 @@ def interactive_mode(use_pipeline: bool = True):
     print("  /direct   - Use direct tool search (no agent)")
     print("  /agent    - Use single agent mode (GPT-4o only)")
     print("  /pipeline - Use pipeline mode (GPT + Gemini)")
+    print("  /web      - Use web search mode (Gemini + Google Search)")
     print("  /clear    - Clear conversation history")
     print("  /quit     - Exit the application")
 
     mode = "pipeline" if use_pipeline else "agent"
     agent = None
     pipeline = None
+    web_agent = None
 
     while True:
         try:
@@ -200,11 +202,17 @@ def interactive_mode(use_pipeline: bool = True):
                     pipeline = None  # Reset pipeline
                     print("Switched to pipeline mode (GPT + Gemini).")
                     continue
+                elif cmd == "/web":
+                    mode = "web_search"
+                    print("Switched to web search mode (Gemini + Google Search).")
+                    continue
                 elif cmd == "/clear":
                     if agent:
                         agent.clear_history()
                     if pipeline:
                         pipeline.clear_history()
+                    if web_agent:
+                        web_agent.clear_history()
                     print("Conversation history cleared.")
                     continue
                 else:
@@ -212,7 +220,28 @@ def interactive_mode(use_pipeline: bool = True):
                     continue
 
             # Process query
-            if mode == "pipeline":
+            if mode == "web_search":
+                from tools.web_search_agent import WebSearchAgent
+                if web_agent is None:
+                    print("\nInitializing web search agent...")
+                    print("  - Loading Gemini 2.5 Flash agent with PDF-filtering tools...")
+                    web_agent = WebSearchAgent(model="gemini-2.5-flash", verbose=True)
+                    print("Web search agent ready!\n")
+
+                print("\n🌐 Searching the web & filtering for legal documents...")
+                try:
+                    result = web_agent.query(user_input)
+                    print(f"\nTools used: {result['tools_used']}")
+                    if result.get("pdf_links"):
+                        print(f"\nPDF/Document links found: {len(result['pdf_links'])}")
+                        for link in result["pdf_links"]:
+                            print(f"  - {link}")
+                    print(f"\nAnswer:\n{result['answer']}")
+                except Exception as e:
+                    print(f"\nWeb search error: {e}")
+                continue
+
+            elif mode == "pipeline":
                 if pipeline is None:
                     print("\nInitializing pipeline...")
                     print("  - Loading GPT-4o retrieval agent...")
@@ -318,6 +347,7 @@ Interactive Commands:
     /direct   - Use direct tool search (no agent)
     /agent    - Use single agent mode (GPT-4o only)
     /pipeline - Use pipeline mode (GPT + Gemini)
+    /web      - Use web search mode (Gemini + Google Search)
     /clear    - Clear conversation history
     /quit     - Exit the application
 

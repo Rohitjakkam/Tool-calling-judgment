@@ -86,8 +86,14 @@ def search_by_party_names(
     ]
 
     filters = []
+
+    # Year filtering - use wildcard on citation field (year field is often corrupted)
+    year_filter = []
     if year:
-        filters.append({"term": {"year": year}})
+        # Search for the year in citation field with a range of +/- 2 years
+        # (citation year and judgment year sometimes differ)
+        for yr in range(year - 2, year + 3):
+            year_filter.append({"wildcard": {"citation": f"*{yr}*"}})
 
     query = {
         "size": min(size, 20),
@@ -98,6 +104,12 @@ def search_by_party_names(
             }
         }
     }
+
+    # Add year filter as a should clause (flexible matching)
+    if year_filter:
+        query["query"]["bool"]["should"] = year_filter
+        # Don't require year match - just boost results that match
+        # This prevents zero results when year field is corrupted
 
     response = execute_search(query)
     return format_results_to_string(response, max_results=size)
@@ -208,14 +220,18 @@ def search_by_single_party(
     filters = []
     if court:
         filters.append({"match": {"court_name": court.lower()}})
+
+    # Year filtering - use wildcard on citation field (year field is often corrupted)
+    year_boost = []
     if year:
-        filters.append({"term": {"year": year}})
+        for yr in range(year - 2, year + 3):
+            year_boost.append({"wildcard": {"citation": f"*{yr}*"}})
 
     query = {
         "size": min(size, 20),
         "query": {
             "bool": {
-                "should": should_clauses,
+                "should": should_clauses + year_boost,
                 "minimum_should_match": 1,
                 "filter": filters
             }
