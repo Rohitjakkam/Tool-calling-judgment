@@ -3,6 +3,9 @@
 Base utilities and shared functions for legal search tools.
 """
 
+import logging
+import os
+from logging.handlers import RotatingFileHandler
 from elasticsearch import Elasticsearch
 from langchain_core.documents import Document
 from typing import List, Dict, Any
@@ -13,6 +16,74 @@ from pprint import pprint
 ES_URL = "http://139.84.219.174:9200"
 ES_INDEX = "judgements"
 ES_TIMEOUT = 60
+
+
+# ============================================================
+# Centralized Logging Configuration
+# ============================================================
+
+# Log directory — project root / logs
+_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+_LOG_FILE = os.path.join(_LOG_DIR, "legal_search.log")
+_LOG_LEVEL = os.getenv("LEGAL_SEARCH_LOG_LEVEL", "DEBUG").upper()
+
+# Ensure logs directory exists
+os.makedirs(_LOG_DIR, exist_ok=True)
+
+
+def setup_logger(name: str) -> logging.Logger:
+    """
+    Create a named logger with console + file handlers.
+
+    Each module should call: logger = setup_logger(__name__)
+
+    Config:
+        - Console: INFO level (concise output)
+        - File: DEBUG level (full detail, rotated at 5MB, 3 backups)
+        - Set LEGAL_SEARCH_LOG_LEVEL env var to change (DEBUG/INFO/WARNING/ERROR)
+
+    Args:
+        name: Logger name (typically __name__)
+
+    Returns:
+        Configured logger instance
+    """
+    logger = logging.getLogger(name)
+
+    # Avoid adding duplicate handlers if called multiple times
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(getattr(logging, _LOG_LEVEL, logging.DEBUG))
+
+    # ── File handler: DEBUG level, rotated ──
+    file_handler = RotatingFileHandler(
+        _LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_fmt = logging.Formatter(
+        "%(asctime)s | %(name)-30s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_fmt)
+
+    # ── Console handler: INFO level (less noisy) ──
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    console_handler.setFormatter(console_fmt)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
+# Base module logger
+logger = setup_logger(__name__)
 
 
 def get_es_client(max_retries: int = 3, sleep_time: int = 2) -> Elasticsearch:
@@ -30,12 +101,13 @@ def get_es_client(max_retries: int = 3, sleep_time: int = 2) -> Elasticsearch:
         try:
             es = Elasticsearch(ES_URL, request_timeout=ES_TIMEOUT)
             es.info()
-            pprint("Connected to Elasticsearch!")
+            logger.debug("Connected to Elasticsearch at %s", ES_URL)
             return es
         except Exception as e:
-            pprint(f"Could not connect to Elasticsearch (attempt {i+1}/{max_retries}): {e}")
+            logger.warning("ES connection attempt %d/%d failed: %s", i + 1, max_retries, e)
             if i < max_retries - 1:
                 time.sleep(sleep_time)
+    logger.error("Failed to connect to Elasticsearch after %d attempts", max_retries)
     raise ConnectionError("Failed to connect to Elasticsearch after multiple attempts.")
 
 
@@ -50,8 +122,28 @@ def execute_search(query: Dict[str, Any], index: str = ES_INDEX) -> Dict[str, An
     Returns:
         Search response
     """
+    import json
+
+    logger.debug("ES query on index '%s': %s", index, json.dumps(query, default=str)[:500])
+
+    start = time.time()
     es = get_es_client()
-    return es.options(request_timeout=ES_TIMEOUT).search(index=index, body=query)
+    response = es.options(request_timeout=ES_TIMEOUT).search(index=index, body=query)
+    elapsed = time.time() - start
+
+    total = response.get("hits", {}).get("total", {})
+    total_count = total.get("value", 0) if isinstance(total, dict) else total
+    hit_count = len(response.get("hits", {}).get("hits", []))
+
+    logger.info("ES search completed in %.2fs — %d hits (total: %d)", elapsed, hit_count, total_count)
+
+    if hit_count > 0:
+        first_hit = response["hits"]["hits"][0]["_source"]
+        pet = first_hit.get("petitioner_names", ["?"])[0] if first_hit.get("petitioner_names") else "?"
+        resp = first_hit.get("respondent_names", ["?"])[0] if first_hit.get("respondent_names") else "?"
+        logger.debug("  Top hit: %s vs %s | score=%.2f", pet, resp, response["hits"]["hits"][0].get("_score", 0))
+
+    return response
 
 
 def format_results(response: Dict[str, Any], include_score: bool = False) -> List[Document]:

@@ -2,7 +2,8 @@
 """
 Legal Search Tools Package
 
-A collection of 25 specialized tools for searching legal judgments in Elasticsearch.
+A collection of 27 specialized tools for searching legal judgments.
+Includes Elasticsearch search tools and Indian Kanoon web scraper.
 Designed for use with LangChain agents using the modern @tool decorator pattern.
 
 Usage:
@@ -77,6 +78,9 @@ from .specialized_search import (
 # Import smart search tool
 from .smart_search import smart_case_search
 
+# Import Indian Kanoon scraper
+from .indiankanoon_scraper import scrape_indiankanoon
+
 # Note: Agent and pipeline classes should be imported directly:
 # from tools.agent import LegalResearchAgent, create_legal_agent, run_query
 # from tools.response_agent import ResponseAgent, LegalResearchPipeline, generate_legal_response
@@ -128,6 +132,9 @@ def get_all_tools() -> List:
 
         # Smart Search (1)
         smart_case_search,
+
+        # Indian Kanoon Scraper (1)
+        scrape_indiankanoon,
     ]
 
 
@@ -177,6 +184,9 @@ def get_tools_by_category() -> dict:
         ],
         "smart_search": [
             smart_case_search,
+        ],
+        "indiankanoon_scraper": [
+            scrape_indiankanoon,
         ],
     }
 
@@ -248,6 +258,9 @@ __all__ = [
 
     # Smart search
     "smart_case_search",
+
+    # Indian Kanoon scraper
+    "scrape_indiankanoon",
 
     # Helper functions
     "get_all_tools",

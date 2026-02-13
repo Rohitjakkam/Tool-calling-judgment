@@ -8,6 +8,11 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from typing import Optional, List, Dict, Any
+import time
+
+from .base import setup_logger
+
+logger = setup_logger(__name__)
 
 # Import tools directly to avoid circular import
 from .party_search import search_by_party_names, fuzzy_name_search, search_by_single_party
@@ -17,6 +22,7 @@ from .content_search import search_by_legal_topic, search_by_keywords, advanced_
 from .advanced_search import search_similar_cases, hybrid_search, aggregation_search, search_landmark_cases, search_by_case_status
 from .specialized_search import search_bail_cases, search_quashing_cases, search_writ_petitions, search_criminal_appeals
 from .smart_search import smart_case_search
+from .indiankanoon_scraper import scrape_indiankanoon
 
 
 def get_all_tools_for_agent() -> List:
@@ -34,15 +40,17 @@ def get_all_tools_for_agent() -> List:
         search_similar_cases, hybrid_search, aggregation_search, search_landmark_cases, search_by_case_status,
         # Specialized Search Tools
         search_bail_cases, search_quashing_cases, search_writ_petitions, search_criminal_appeals,
-        # Smart Search (exhaustive multi-strategy)
+        # Smart Search (exhaustive multi-strategy + Indian Kanoon fallback)
         smart_case_search,
+        # Indian Kanoon Scraper (standalone internet search)
+        scrape_indiankanoon,
     ]
 
 
 # System prompt for the legal research agent
 SYSTEM_PROMPT = """You are an expert legal research assistant with access to a comprehensive Indian legal judgment database.
 
-You have access to 25 specialized search tools. Choose the most appropriate tool based on the query.
+You have access to 27 specialized search tools. Choose the most appropriate tool based on the query.
 
 ## PRIORITY TOOL — Smart Case Search (USE FIRST for specific cases):
 
@@ -64,6 +72,14 @@ This tool automatically tries 7-12 different search strategies including:
 - Any query that names specific parties or a specific case
 
 This single tool call replaces the need for 5-7 manual retries. It handles all permutations automatically.
+**It also includes an automatic Indian Kanoon internet fallback (Strategy 13) when all database strategies fail.**
+
+### `scrape_indiankanoon` — Direct internet search on indiankanoon.org
+Use this when:
+- `smart_case_search` failed AND you want to specifically search Indian Kanoon
+- User explicitly asks to "search on Indian Kanoon" or "find on indiankanoon"
+- You need the actual full judgment text from a live source
+Note: `smart_case_search` already calls this automatically as its Strategy 13 fallback, so you usually don't need to call it separately.
 
 ## Other Tools (for non-specific-case queries):
 
@@ -144,6 +160,8 @@ def create_legal_agent(
     """
     # Get all tools
     tools = get_all_tools_for_agent()
+    logger.info("Creating legal agent: model=%s, temperature=%s, tools=%d", model, temperature, len(tools))
+    logger.debug("Tool names: %s", [t.name for t in tools])
 
     # Create LLM
     llm = ChatOpenAI(model=model, temperature=temperature)
@@ -155,6 +173,7 @@ def create_legal_agent(
         system_prompt=SYSTEM_PROMPT,
     )
 
+    logger.info("Legal agent created successfully")
     return agent
 
 
@@ -174,6 +193,11 @@ def run_query(
     Returns:
         Dictionary with output and tools used
     """
+    logger.info("=" * 60)
+    logger.info("AGENT QUERY: '%s'", query[:100])
+    logger.info("=" * 60)
+    logger.debug("Chat history length: %d messages", len(chat_history) if chat_history else 0)
+
     # Build messages
     messages = []
 
@@ -185,7 +209,9 @@ def run_query(
     messages.append({"role": "user", "content": query})
 
     # Invoke agent
+    query_start = time.time()
     result = agent.invoke({"messages": messages})
+    query_elapsed = time.time() - query_start
 
     # Extract the answer from the result
     output_messages = result.get("messages", [])
@@ -216,6 +242,11 @@ def run_query(
         elif isinstance(last_msg, dict):
             answer = last_msg.get('content', str(last_msg))
 
+    logger.info("=" * 60)
+    logger.info("AGENT COMPLETED in %.2fs | tools_used=%s | answer_length=%d chars",
+                query_elapsed, tools_used, len(answer))
+    logger.info("=" * 60)
+
     return {
         "answer": answer,
         "tools_used": tools_used,
@@ -242,8 +273,10 @@ class LegalResearchAgent:
             temperature: LLM temperature
             verbose: Whether to print agent steps
         """
+        logger.info("Initializing LegalResearchAgent: model=%s, temperature=%s", model, temperature)
         self.agent = create_legal_agent(model, temperature, verbose)
         self.chat_history: List = []
+        logger.info("LegalResearchAgent initialized successfully")
 
     def query(self, user_input: str) -> Dict[str, Any]:
         """

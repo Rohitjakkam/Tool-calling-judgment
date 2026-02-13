@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 exports/
+logs/
 # C extensions
 *.so
 chat_sessions/
