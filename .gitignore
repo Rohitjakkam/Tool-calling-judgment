@@ -2,6 +2,8 @@
 __pycache__/
 *.py[codz]
 *$py.class
+r&d\chroma_db
+High court r&d\pdfs_bombay_jan2025
 
 exports/
 logs/
